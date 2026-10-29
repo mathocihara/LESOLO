@@ -1,0 +1,16 @@
+# Arquivos geoespaciais pesados
+*.tif
+*.tiff
+*.gpkg
+*.zip
+
+# Arquivos temporários do Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Arquivos auxiliares de geoprocessamento
+*.aux.xml
+*.qmd
+*.ovr
