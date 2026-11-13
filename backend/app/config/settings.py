@@ -1,6 +1,7 @@
 
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -37,6 +38,15 @@ class Settings(BaseSettings):
     DATABASE_URL: str | None = None
 
     # Inteligencia artificial
+    OLLAMA_URL: str = "http://localhost:11434/api/chat"
+    OLLAMA_MODEL: str = "llama3.2:3b"
+    OLLAMA_CONTEXT_LENGTH: int = Field(default=8192, ge=4096, le=131072)
+    OLLAMA_NUM_PREDICT: int = Field(default=768, ge=128, le=4096)
+    OLLAMA_TIMEOUT_SECONDS: float = Field(default=180, gt=0)
+    IA_MAX_VALIDATION_ATTEMPTS: int = Field(default=1, ge=1, le=3)
+    IA_MAX_REFERENCIAS_CONTEXTO: int = Field(default=1, ge=1, le=10)
+
+    # Mantido preparado para uma implementação futura do provedor OpenAI.
     OPENAI_API_KEY: str | None = None
     OPENAI_MODEL: str | None = None
 

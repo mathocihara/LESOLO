@@ -20,7 +20,7 @@ from app.config.settings import (
 # ==========================================
 
 CAMPO_SOLO = "legenda"
-CAMPO_APTIDAO = "Legenda_Ap"
+CAMPO_APTIDAO = "Simb_Apt"
 
 
 # ==========================================

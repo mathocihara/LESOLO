@@ -2,6 +2,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.routes.consulta import router as consultas_router
+from app.routes.explicacao import router as explicacao_router
 
 from app.config.settings import settings
 
@@ -57,3 +58,4 @@ def verificar_api():
 
 
 app.include_router(consultas_router)
+app.include_router(explicacao_router)
