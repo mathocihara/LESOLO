@@ -1,0 +1,3 @@
+Diretório de migrações Alembic do LESOLO.
+As revisões versionadas ficam em versions/.
+Use `python -m alembic upgrade head` a partir de backend/ para aplicar as migrações.

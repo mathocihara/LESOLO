@@ -1,0 +1,2 @@
+Revisões Alembic do LESOLO, em ordem de dependência.
+ed4bdd3fc88a_criar_tabelas_iniciais.py cria as cinco tabelas dos modelos SQLAlchemy.
