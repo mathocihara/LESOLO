@@ -39,6 +39,18 @@ def preparar_contexto_ia(dados: ExplicacaoRequest) -> dict:
     limite_referencias = settings.IA_MAX_REFERENCIAS_CONTEXTO
     referencias = referencias_priorizadas[:limite_referencias]
     avisos = list(recuperacao["avisos"])
+    if consulta.get("status_consulta") in {"PARCIAL", "SEM_RESULTADOS"}:
+        ausentes = ", ".join(consulta.get("dados_ausentes", [])) or "não identificados"
+        avisos.append(
+            f"A consulta geográfica está {consulta['status_consulta'].casefold()}; "
+            f"dados ausentes: {ausentes}. Não trate os campos ausentes como zero."
+        )
+    desatualizados = consulta.get("dados_desatualizados", [])
+    if desatualizados:
+        avisos.append(
+            "Estes valores foram preservados de uma consulta anterior e não foram "
+            "confirmados nesta consulta: " + ", ".join(desatualizados) + "."
+        )
     prompts = construir_prompts(consulta, referencias, avisos)
 
     return {

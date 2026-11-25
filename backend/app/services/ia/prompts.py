@@ -27,6 +27,11 @@ produtividade, recomendações ou efeitos que não estejam na legenda.
 Não traduza classes como REGULAR ou RESTRITA em previsões de sucesso ou fracasso
 de cultivo.
 
+Respeite status_consulta, dados_ausentes e dados_desatualizados. Não substitua
+ausências por zero nem apresente dados_desatualizados como atuais. Quando a
+consulta estiver parcial ou sem resultados, diga quais dados não foram obtidos
+e limite a interpretação aos dados atuais disponíveis e às referências.
+
 Preencha as cinco seções obrigatórias com uma frase objetiva cada, sem repetir
 informações. Em dados_recebidos, apenas resuma os valores recebidos. Use somente
 referências fornecidas e copie seus títulos exatamente. Se houver uma referência

@@ -3,19 +3,24 @@ import AuthLayout from '../components/AuthLayout.jsx'
 import Logo from '../components/Logo.jsx'
 import FormField from '../components/FormField.jsx'
 import Input from '../components/Input.jsx'
+import PasswordInput from '../components/PasswordInput.jsx'
 import Button from '../components/Button.jsx'
 import Divider from '../components/Divider.jsx'
 import { GoogleIcon } from '../components/icons.jsx'
+import ErrorMessage from '../components/ErrorMessage.jsx'
+import { entrar } from '../services/api.js'
 
 export default function Login({ onGoRegister, onLogin }) {
   const [identifier, setIdentifier] = useState('')
   const [password, setPassword] = useState('')
   const [errors, setErrors] = useState({})
+  const [requestError, setRequestError] = useState('')
+  const [loading, setLoading] = useState(false)
 
-  function handleSubmit(event) {
+  async function handleSubmit(event) {
     event.preventDefault()
     const next = {}
-    if (!identifier.trim()) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identifier.trim())) {
       next.identifier = 'Nome ou e-mail inválido'
     }
     if (!password) {
@@ -23,9 +28,12 @@ export default function Login({ onGoRegister, onLogin }) {
     }
     setErrors(next)
 
-    if (!next.identifier && !next.password) {
-      onLogin()
-    }
+    setRequestError('')
+    if (Object.keys(next).length) return
+    setLoading(true)
+    try { onLogin(await entrar({ email: identifier.trim(), senha: password })) }
+    catch (error) { setRequestError(error.message || 'Não foi possível entrar.') }
+    finally { setLoading(false) }
   }
 
   return (
@@ -37,12 +45,12 @@ export default function Login({ onGoRegister, onLogin }) {
       </div>
 
       <form className="form" onSubmit={handleSubmit} noValidate>
-        <FormField label="Nome ou e-mail" htmlFor="identifier" error={errors.identifier}>
+        <FormField label="E-mail" htmlFor="identifier" error={errors.identifier}>
           <Input
             id="identifier"
-            type="text"
+            type="email"
             value={identifier}
-            placeholder="Seu nome ou e-mail"
+            placeholder="seu@email.com"
             onChange={(e) => setIdentifier(e.target.value)}
             size="lg"
             variant="strong"
@@ -51,9 +59,8 @@ export default function Login({ onGoRegister, onLogin }) {
         </FormField>
 
         <FormField label="Senha" htmlFor="password" error={errors.password}>
-          <Input
+          <PasswordInput
             id="password"
-            type="password"
             value={password}
             placeholder="••••••••"
             onChange={(e) => setPassword(e.target.value)}
@@ -63,8 +70,9 @@ export default function Login({ onGoRegister, onLogin }) {
           />
         </FormField>
 
-        <Button variant="primary" type="submit">
-          ENTRAR
+        {requestError && <div role="alert"><ErrorMessage>{requestError}</ErrorMessage></div>}
+        <Button variant="primary" type="submit" disabled={loading}>
+          {loading ? 'ENTRANDO...' : 'ENTRAR'}
         </Button>
       </form>
 

@@ -1,5 +1,6 @@
 import unittest
 import uuid
+from datetime import datetime, timedelta, timezone
 
 from argon2 import PasswordHasher
 from sqlalchemy import create_engine
@@ -80,14 +81,14 @@ class TesteServicoAutenticacao(unittest.TestCase):
 
         self.assertEqual(str(senha_incorreta.exception), str(email_inexistente.exception))
 
-    def test_autenticar_cria_sessao_ativa_nao_persistente(self) -> None:
+    def test_autenticar_cria_sessao_ativa_persistente_com_ttl_limitado(self) -> None:
         usuario = self._cadastrar_usuario()
 
         sessao = self.servico.autenticar("pessoa@example.test", "senha-segura-123")
 
         self.assertEqual(sessao.usuario_id, usuario.id)
         self.assertIsNotNone(sessao.data_criacao)
-        self.assertFalse(sessao.persistente)
+        self.assertTrue(sessao.persistente)
         self.assertTrue(sessao.ativa)
 
     def test_logout_encerra_sessao(self) -> None:
@@ -108,6 +109,49 @@ class TesteServicoAutenticacao(unittest.TestCase):
         self.servico.logout(sessao.id)
         with self.assertRaises(SessaoInvalidaError):
             self.servico.logout(sessao.id)
+
+    def test_solicitacao_exclusao_preserva_conta_e_login_cancela(self) -> None:
+        usuario = self._cadastrar_usuario()
+
+        solicitada_em = self.servico.excluir_conta(usuario.id, "senha-segura-123")
+
+        self.assertIsNotNone(self.servico._usuarios.buscar_por_id(usuario.id))
+        self.assertEqual(usuario.exclusao_solicitada_em, solicitada_em)
+        self.servico.autenticar("pessoa@example.test", "senha-segura-123")
+        self.assertIsNone(usuario.exclusao_solicitada_em)
+
+    def test_exclusao_definitiva_apenas_apos_trinta_dias(self) -> None:
+        usuario = self._cadastrar_usuario()
+        agora = datetime.now(timezone.utc)
+        usuario.exclusao_solicitada_em = agora - timedelta(days=30, seconds=1)
+        self.sessao.commit()
+
+        quantidade = self.servico.excluir_contas_vencidas(agora)
+
+        self.assertEqual(quantidade, 1)
+        self.assertIsNone(self.servico._usuarios.buscar_por_id(usuario.id))
+
+    def test_solicitacao_com_menos_de_trinta_dias_preserva_conta(self) -> None:
+        usuario = self._cadastrar_usuario()
+        agora = datetime.now(timezone.utc)
+        usuario.exclusao_solicitada_em = agora - timedelta(days=29)
+        self.sessao.commit()
+
+        quantidade = self.servico.excluir_contas_vencidas(agora)
+
+        self.assertEqual(quantidade, 0)
+        self.assertIsNotNone(self.servico._usuarios.buscar_por_id(usuario.id))
+
+    def test_login_nao_cancela_solicitacao_que_ja_venceu(self) -> None:
+        usuario = self._cadastrar_usuario()
+        usuario.exclusao_solicitada_em = datetime.now(timezone.utc) - timedelta(days=31)
+        self.sessao.commit()
+
+        with self.assertRaises(CredenciaisInvalidasError):
+            self.servico.autenticar("pessoa@example.test", "senha-segura-123")
+
+        self.assertIsNotNone(self.servico._usuarios.buscar_por_id(usuario.id))
+        self.assertIsNotNone(usuario.exclusao_solicitada_em)
 
 
 if __name__ == "__main__":

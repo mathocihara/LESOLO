@@ -1,4 +1,6 @@
 
+import logging
+
 import geopandas as gpd
 import numpy as np
 import pandas as pd
@@ -21,6 +23,7 @@ from app.config.settings import (
 
 CAMPO_SOLO = "legenda"
 CAMPO_APTIDAO = "Simb_Apt"
+logger = logging.getLogger(__name__)
 
 
 # ==========================================
@@ -30,8 +33,16 @@ CAMPO_APTIDAO = "Simb_Apt"
 # Os arquivos GeoPackage sao carregados uma vez
 # para evitar releitura em cada consulta.
 
-tipo_solo_gdf = gpd.read_file(SOLOS_PATH)
-aptidao_gdf = gpd.read_file(APTIDAO_PATH)
+def _carregar_gpkg(caminho, rotulo):
+    try:
+        return gpd.read_file(caminho)
+    except Exception:
+        logger.exception("Não foi possível carregar a fonte geográfica %s.", rotulo)
+        return None
+
+
+tipo_solo_gdf = _carregar_gpkg(SOLOS_PATH, "tipo_solo")
+aptidao_gdf = _carregar_gpkg(APTIDAO_PATH, "aptidao_agricola")
 
 
 # ==========================================
@@ -72,6 +83,9 @@ def consultar_raster(caminho, latitude, longitude):
 
 def consultar_gpkg(gdf, latitude, longitude, campo):
 
+    if gdf is None:
+        raise RuntimeError("A camada geográfica não foi carregada.")
+
     if gdf.crs is None:
         raise ValueError(
             "O GeoPackage nao possui CRS definido."
@@ -101,7 +115,8 @@ def consultar_gpkg(gdf, latitude, longitude, campo):
     if pd.isna(valor):
         return None
 
-    return str(valor).strip()
+    texto = str(valor).strip()
+    return texto or None
 
 
 # ==========================================
@@ -117,42 +132,32 @@ def consultar_coordenada(latitude, longitude):
     if not -180 <= longitude <= 180:
         raise ValueError("Longitude deve estar entre -180 e 180.")
 
-    # Consulta dos arquivos raster
-    altitude = consultar_raster(
-        ALTITUDE_PATH,
-        latitude,
-        longitude
-    )
-
-    declividade = consultar_raster(
-        DECLIVIDADE_PATH,
-        latitude,
-        longitude
-    )
-
-    # Consulta dos arquivos vetoriais
-    tipo_solo = consultar_gpkg(
-        tipo_solo_gdf,
-        latitude,
-        longitude,
-        CAMPO_SOLO
-    )
-
-    aptidao = consultar_gpkg(
-        aptidao_gdf,
-        latitude,
-        longitude,
-        CAMPO_APTIDAO
-    )
-
-    # Retorno estruturado dos resultados
-    resultado = {
-        "latitude": latitude,
-        "longitude": longitude,
-        "altitude_m": altitude,
-        "declividade_percentual": declividade,
-        "tipo_solo": tipo_solo,
-        "aptidao_agricola": aptidao
+    fontes = {
+        "altitude_m": lambda: consultar_raster(ALTITUDE_PATH, latitude, longitude),
+        "declividade_percentual": lambda: consultar_raster(DECLIVIDADE_PATH, latitude, longitude),
+        "tipo_solo": lambda: consultar_gpkg(tipo_solo_gdf, latitude, longitude, CAMPO_SOLO),
+        "aptidao_agricola": lambda: consultar_gpkg(aptidao_gdf, latitude, longitude, CAMPO_APTIDAO),
     }
+    resultado = {"latitude": latitude, "longitude": longitude}
+    falhas = []
+    for campo, consultar in fontes.items():
+        try:
+            resultado[campo] = consultar()
+        except Exception as erro:
+            logger.warning(
+                "Falha na consulta da fonte geográfica %s (%s).",
+                campo,
+                type(erro).__name__,
+            )
+            resultado[campo] = None
+            falhas.append(campo)
 
+    ausentes = [campo for campo in fontes if resultado[campo] is None]
+    disponiveis = len(fontes) - len(ausentes)
+    estado = "COMPLETA" if not ausentes else "PARCIAL" if disponiveis else "SEM_RESULTADOS"
+    resultado.update({
+        "status_consulta": estado,
+        "dados_ausentes": ausentes,
+        "falhas_fontes": falhas,
+    })
     return resultado

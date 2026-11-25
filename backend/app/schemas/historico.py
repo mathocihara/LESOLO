@@ -23,6 +23,10 @@ class RegistroHistoricoResponse(BaseModel):
     aptidao_agricola: str | None
     status: StatusRegistro
     data_expiracao: datetime | None
+    status_consulta: str = "NAO_CLASSIFICADA"
+    dados_ausentes: list[str] = Field(default_factory=list)
+    falhas_fontes: list[str] = Field(default_factory=list)
+    dados_desatualizados: list[str] = Field(default_factory=list)
 
 
 class ExclusaoHistoricoResponse(BaseModel):

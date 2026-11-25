@@ -3,8 +3,9 @@ from __future__ import annotations
 import re
 import uuid
 from datetime import datetime, timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.registro_consulta import (
@@ -25,6 +26,8 @@ class RegistroConsultaNaoEncontradoError(LookupError):
 
 _NOME_AUTOMATICO = re.compile(r"^Consulta (\d+)$")
 _PRAZO_EXPIRACAO_PADRAO = timedelta(days=30)
+_PRECISAO_COORDENADAS = Decimal("0.000001")
+_STATUS_CONSULTA = {"COMPLETA", "PARCIAL", "SEM_RESULTADOS", "NAO_CLASSIFICADA"}
 
 
 class ServicoRegistro:
@@ -43,6 +46,25 @@ class ServicoRegistro:
         self._repositorio = RegistroConsultaRepositorio(sessao)
         self._prazo_expiracao_temporario = prazoExpiracaoTemporario
 
+    def excluir_temporarios_vencidos(self, agora: datetime | None = None) -> int:
+        """Remove registros temporários cujo prazo de retenção já terminou."""
+        instante = agora or datetime.now(timezone.utc)
+        try:
+            vencidos = list(self._sessao.scalars(
+                select(RegistroConsulta).where(
+                    RegistroConsulta.status == StatusRegistro.TEMPORARIO,
+                    RegistroConsulta.data_expiracao.is_not(None),
+                    RegistroConsulta.data_expiracao <= instante,
+                )
+            ))
+            for registro in vencidos:
+                self._sessao.delete(registro)
+            self._sessao.commit()
+            return len(vencidos)
+        except Exception:
+            self._sessao.rollback()
+            raise
+
     def criarTemporario(
         self,
         usuarioId: uuid.UUID,
@@ -50,6 +72,10 @@ class ServicoRegistro:
         longitude: Decimal | int | float,
         dadosGeograficos: DadosGeograficos,
         dataConsulta: datetime,
+        *,
+        statusConsulta: str = "COMPLETA",
+        dadosAusentes: list[str] | None = None,
+        falhasFontes: list[str] | None = None,
     ) -> RegistroConsulta:
         self._validar_uuid(usuarioId, "Usuário")
         latitude_validada = self._validar_coordenada(latitude, -90, 90, "latitude")
@@ -58,6 +84,7 @@ class ServicoRegistro:
             raise DadosRegistroInvalidosError("Dados geográficos inválidos.")
         if not isinstance(dataConsulta, datetime):
             raise DadosRegistroInvalidosError("Data da consulta inválida.")
+        self._validar_status_consulta(statusConsulta)
 
         try:
             registro = RegistroConsulta(
@@ -68,8 +95,85 @@ class ServicoRegistro:
                 data_consulta=dataConsulta,
                 status=StatusRegistro.TEMPORARIO,
                 data_expiracao=dataConsulta + self._prazo_expiracao_temporario,
+                status_consulta=statusConsulta,
+                dados_ausentes=list(dadosAusentes or []),
+                falhas_fontes=list(falhasFontes or []),
+                dados_desatualizados=[],
             )
             registro = self._repositorio.salvar(registro)
+            self._sessao.commit()
+            return registro
+        except Exception:
+            self._sessao.rollback()
+            raise
+
+    def buscarConsultasRepetidas(
+        self,
+        usuarioId: uuid.UUID,
+        latitude: Decimal | int | float,
+        longitude: Decimal | int | float,
+    ) -> list[RegistroConsulta]:
+        self._validar_uuid(usuarioId, "Usuário")
+        latitude_validada = self._validar_coordenada(latitude, -90, 90, "latitude")
+        longitude_validada = self._validar_coordenada(longitude, -180, 180, "longitude")
+        return self._repositorio.buscar_por_coordenadas(
+            usuarioId, latitude_validada, longitude_validada
+        )
+
+    def atualizarConsulta(
+        self,
+        registroId: uuid.UUID,
+        usuarioId: uuid.UUID,
+        latitude: Decimal | int | float,
+        longitude: Decimal | int | float,
+        dadosGeograficos: DadosGeograficos,
+        dataConsulta: datetime,
+        *,
+        statusConsulta: str,
+        dadosAusentes: list[str],
+        falhasFontes: list[str],
+    ) -> RegistroConsulta:
+        self._validar_uuid(registroId, "Registro")
+        self._validar_uuid(usuarioId, "Usuário")
+        self._validar_status_consulta(statusConsulta)
+        if not isinstance(dadosGeograficos, DadosGeograficos) or not isinstance(dataConsulta, datetime):
+            raise DadosRegistroInvalidosError("Resultados da consulta inválidos.")
+        latitude_validada = self._validar_coordenada(latitude, -90, 90, "latitude")
+        longitude_validada = self._validar_coordenada(longitude, -180, 180, "longitude")
+        campos = {
+            "altitude_m": ("mde", "mde"),
+            "declividade_percentual": ("declividade", "declividade"),
+            "tipo_solo": ("tipo_solo", "tipo_solo"),
+            "aptidao_agricola": ("aptidao_agricola", "aptidao_agricola"),
+        }
+        ausentes = set(dadosAusentes)
+        self._validar_campos_consulta(ausentes | set(falhasFontes))
+        try:
+            registro = self._repositorio.buscar_por_id(registroId, usuarioId)
+            if registro is None:
+                raise RegistroConsultaNaoEncontradoError("Registro não encontrado para este usuário.")
+            anteriores = registro.dados_geograficos
+            novos = {}
+            desatualizados = []
+            for campo_api, (campo_anterior, campo_novo) in campos.items():
+                valor_novo = getattr(dadosGeograficos, campo_novo)
+                valor_anterior = getattr(anteriores, campo_anterior)
+                if campo_api in ausentes:
+                    novos[campo_novo] = valor_anterior
+                    if valor_anterior is not None:
+                        desatualizados.append(campo_api)
+                else:
+                    novos[campo_novo] = valor_novo
+            registro.latitude = latitude_validada
+            registro.longitude = longitude_validada
+            registro.dados_geograficos = DadosGeograficos(**novos)
+            registro.data_consulta = dataConsulta
+            registro.status_consulta = statusConsulta
+            registro.dados_ausentes = sorted(ausentes)
+            registro.falhas_fontes = sorted(set(falhasFontes))
+            registro.dados_desatualizados = desatualizados
+            if registro.status == StatusRegistro.TEMPORARIO:
+                registro.data_expiracao = dataConsulta + self._prazo_expiracao_temporario
             self._sessao.commit()
             return registro
         except Exception:
@@ -192,7 +296,17 @@ class ServicoRegistro:
             or not Decimal(minimo) <= coordenada <= Decimal(maximo)
         ):
             raise DadosRegistroInvalidosError(f"{campo.capitalize()} fora dos limites permitidos.")
-        return coordenada
+        return coordenada.quantize(_PRECISAO_COORDENADAS, rounding=ROUND_HALF_UP)
+
+    @staticmethod
+    def _validar_status_consulta(status: str) -> None:
+        if status not in _STATUS_CONSULTA:
+            raise DadosRegistroInvalidosError("Estado da consulta inválido.")
+
+    @staticmethod
+    def _validar_campos_consulta(campos: set[str]) -> None:
+        if not campos.issubset({"altitude_m", "declividade_percentual", "tipo_solo", "aptidao_agricola"}):
+            raise DadosRegistroInvalidosError("A consulta contém nomes de dados inválidos.")
 
     @staticmethod
     def _normalizar_nome(nome: str | None) -> str | None:

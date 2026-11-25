@@ -80,6 +80,27 @@ class TesteServicoRegistro(unittest.TestCase):
         self.assertEqual(registro.aptidao_agricola, "A1")
         self.assertFalse(hasattr(registro, "explicacao"))
 
+    def test_purga_temporarios_vencidos_sem_remover_permanentes_ou_vigentes(self) -> None:
+        expirado = self._criar_temporario(
+            data_consulta=datetime(2026, 1, 1, tzinfo=timezone.utc)
+        )
+        vigente = self._criar_temporario(
+            data_consulta=datetime(2026, 1, 10, tzinfo=timezone.utc)
+        )
+        permanente = self._criar_temporario(
+            data_consulta=datetime(2026, 1, 1, tzinfo=timezone.utc)
+        )
+        permanente = self.servico.salvarComoPermanente(permanente.id, self.usuario.id)
+
+        removidos = self.servico.excluir_temporarios_vencidos(
+            datetime(2026, 1, 20, tzinfo=timezone.utc)
+        )
+
+        self.assertEqual(removidos, 1)
+        self.assertIsNone(self.sessao.get(RegistroConsulta, expirado.id))
+        self.assertIsNotNone(self.sessao.get(RegistroConsulta, vigente.id))
+        self.assertEqual(self.sessao.get(RegistroConsulta, permanente.id).status, StatusRegistro.PERMANENTE)
+
     def test_salva_como_permanente_e_remove_expiracao(self) -> None:
         temporario = self._criar_temporario()
 
@@ -139,6 +160,68 @@ class TesteServicoRegistro(unittest.TestCase):
             {permanente_antigo.id, temporario.id, permanente_novo.id},
         )
         self.assertNotIn(registro_alheio.id, {registro.id for registro in todos})
+
+    def test_identifica_repeticoes_na_precisao_de_seis_casas_e_isola_usuario(self) -> None:
+        meu_registro = self._criar_temporario()
+        registro_alheio = self._criar_temporario(usuario_id=self.outro_usuario.id)
+
+        repetidos = self.servico.buscarConsultasRepetidas(
+            self.usuario.id, -25.4300004, -49.2700004
+        )
+        diferentes = self.servico.buscarConsultasRepetidas(
+            self.usuario.id, -25.430002, -49.270000
+        )
+
+        self.assertEqual([registro.id for registro in repetidos], [meu_registro.id])
+        self.assertNotIn(registro_alheio.id, [registro.id for registro in repetidos])
+        self.assertEqual(diferentes, [])
+
+    def test_atualiza_registro_preserva_valores_anteriores_ausentes_e_estado(self) -> None:
+        temporario = self._criar_temporario()
+        atualizado = self.servico.atualizarConsulta(
+            temporario.id,
+            self.usuario.id,
+            -25.4300002,
+            -49.2700002,
+            DadosGeograficos(mde=None, declividade=Decimal("15.0"), tipo_solo=None, aptidao_agricola=None),
+            datetime(2026, 2, 1, tzinfo=timezone.utc),
+            statusConsulta="PARCIAL",
+            dadosAusentes=["altitude_m", "tipo_solo", "aptidao_agricola"],
+            falhasFontes=["altitude_m"],
+        )
+
+        self.assertEqual(atualizado.id, temporario.id)
+        self.assertEqual(atualizado.status, StatusRegistro.TEMPORARIO)
+        self.assertEqual(atualizado.altitude_m, Decimal("900.250"))
+        self.assertEqual(atualizado.declividade_percentual, Decimal("15.0"))
+        self.assertEqual(atualizado.tipo_solo, "Latossolo")
+        self.assertEqual(atualizado.aptidao_agricola, "A1")
+        self.assertEqual(
+            set(atualizado.dados_desatualizados),
+            {"altitude_m", "tipo_solo", "aptidao_agricola"},
+        )
+        self.assertEqual(atualizado.data_expiracao, datetime(2026, 2, 15, tzinfo=timezone.utc))
+
+    def test_atualiza_permanente_sem_alterar_identificador_ou_expiracao(self) -> None:
+        temporario = self._criar_temporario()
+        permanente = self.servico.salvarComoPermanente(temporario.id, self.usuario.id)
+
+        atualizado = self.servico.atualizarConsulta(
+            permanente.id,
+            self.usuario.id,
+            -25.43,
+            -49.27,
+            self._dados_geograficos(),
+            datetime(2026, 2, 1, tzinfo=timezone.utc),
+            statusConsulta="COMPLETA",
+            dadosAusentes=[],
+            falhasFontes=[],
+        )
+
+        self.assertEqual(atualizado.id, permanente.id)
+        self.assertEqual(atualizado.status, StatusRegistro.PERMANENTE)
+        self.assertIsNone(atualizado.data_expiracao)
+        self.assertEqual(atualizado.dados_desatualizados, [])
 
     def test_salvar_e_excluir_respeitam_proprietario(self) -> None:
         registro = self._criar_temporario()

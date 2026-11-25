@@ -4,6 +4,7 @@ import uuid
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from decimal import Decimal
 
 from app.models.registro_consulta import RegistroConsulta, StatusRegistro
 
@@ -36,6 +37,20 @@ class RegistroConsultaRepositorio:
         if status is not None:
             consulta = consulta.where(RegistroConsulta.status == status)
         return list(self._sessao.scalars(consulta).all())
+
+    def buscar_por_coordenadas(
+        self,
+        usuario_id: uuid.UUID,
+        latitude: Decimal,
+        longitude: Decimal,
+    ) -> list[RegistroConsulta]:
+        return list(self._sessao.scalars(
+            select(RegistroConsulta).where(
+                RegistroConsulta.usuario_id == usuario_id,
+                RegistroConsulta.latitude == latitude,
+                RegistroConsulta.longitude == longitude,
+            ).order_by(RegistroConsulta.data_consulta.desc())
+        ).all())
 
     def excluir_por_id(self, registro_id: uuid.UUID, usuario_id: uuid.UUID) -> bool:
         registro = self.buscar_por_id(registro_id, usuario_id)

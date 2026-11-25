@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import uuid
+from datetime import date, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import String, Uuid
+from sqlalchemy import Date, DateTime, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.conexao import Base
@@ -22,6 +23,8 @@ class Usuario(Base):
     nome: Mapped[str] = mapped_column(String(200), nullable=False)
     email: Mapped[str] = mapped_column(String(320), nullable=False, unique=True)
     senha_hash: Mapped[str] = mapped_column("senha_hash", String(255), nullable=False)
+    data_nascimento: Mapped[date | None] = mapped_column(Date, nullable=True)
+    exclusao_solicitada_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     sessoes: Mapped[list[Sessao]] = relationship(
         back_populates="usuario",

@@ -13,6 +13,7 @@ from sqlalchemy import (
     Enum,
     ForeignKey,
     Index,
+    JSON,
     Numeric,
     Text,
     Uuid,
@@ -83,6 +84,18 @@ class RegistroConsulta(Base):
         server_default=StatusRegistro.TEMPORARIO.value,
     )
     data_expiracao: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status_consulta: Mapped[str] = mapped_column(
+        Text, nullable=False, default="COMPLETA", server_default="COMPLETA"
+    )
+    dados_ausentes: Mapped[list[str]] = mapped_column(
+        JSON, nullable=False, default=list, server_default="[]"
+    )
+    falhas_fontes: Mapped[list[str]] = mapped_column(
+        JSON, nullable=False, default=list, server_default="[]"
+    )
+    dados_desatualizados: Mapped[list[str]] = mapped_column(
+        JSON, nullable=False, default=list, server_default="[]"
+    )
 
     usuario: Mapped[Usuario] = relationship(back_populates="registros_consulta")
 

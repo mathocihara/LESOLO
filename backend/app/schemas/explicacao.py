@@ -24,6 +24,10 @@ class ConsultaGeoespacial(SchemaBase):
 
     tipo_solo: str | None = None
     aptidao_agricola: str | None = None
+    status_consulta: Literal["COMPLETA", "PARCIAL", "SEM_RESULTADOS", "NAO_CLASSIFICADA"] = "COMPLETA"
+    dados_ausentes: list[str] = Field(default_factory=list)
+    falhas_fontes: list[str] = Field(default_factory=list)
+    dados_desatualizados: list[str] = Field(default_factory=list)
 
 
 class ExplicacaoRequest(SchemaBase):

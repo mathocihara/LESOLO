@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.database.conexao import obter_sessao
 from app.models.sessao import Sessao
-from app.routes.dependencias import obter_sessao_autenticada
+from app.routes.dependencias import obter_sessao_autenticada, validar_origem_requisicao
 from app.schemas.preferencias import (
     AtualizarPreferenciasRequest,
     PreferenciasResponse,
@@ -27,6 +27,7 @@ def buscar_preferencias(
 def atualizar_preferencias(
     dados: AtualizarPreferenciasRequest,
     sessao: Sessao = Depends(obter_sessao_autenticada),
+    _validacao_origem: None = Depends(validar_origem_requisicao),
     sessao_banco: Session = Depends(obter_sessao),
 ) -> PreferenciasResponse:
     preferencia = ServicoPreferenciasUsuario(sessao_banco).atualizar(

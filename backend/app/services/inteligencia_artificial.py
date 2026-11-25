@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -39,7 +40,14 @@ def gerar_resposta_ollama(
     )
 
     try:
-        logger.info("Solicitando resposta estruturada ao Ollama (%s)", settings.OLLAMA_MODEL)
+        iniciado = time.monotonic()
+        logger.info(
+            "Solicitando resposta estruturada ao Ollama (model=%s, context=%s, predict=%s, prompt_chars=%s)",
+            settings.OLLAMA_MODEL,
+            payload["options"]["num_ctx"],
+            payload["options"]["num_predict"],
+            len(prompt_sistema) + len(prompt_usuario),
+        )
         with urlopen(requisicao, timeout=settings.OLLAMA_TIMEOUT_SECONDS) as resposta:
             resultado = json.loads(resposta.read().decode("utf-8"))
     except HTTPError as erro:
@@ -68,5 +76,16 @@ def gerar_resposta_ollama(
             "Ollama encerrou a geração pelo limite de tokens (eval_count=%s)",
             resultado.get("eval_count"),
         )
+
+    logger.info(
+        "Ollama concluiu (elapsed_seconds=%.2f, prompt_tokens=%s, output_tokens=%s, "
+        "prompt_eval_seconds=%.2f, eval_seconds=%.2f, done_reason=%s)",
+        time.monotonic() - iniciado,
+        resultado.get("prompt_eval_count"),
+        resultado.get("eval_count"),
+        (resultado.get("prompt_eval_duration") or 0) / 1_000_000_000,
+        (resultado.get("eval_duration") or 0) / 1_000_000_000,
+        resultado.get("done_reason"),
+    )
 
     return conteudo

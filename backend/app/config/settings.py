@@ -1,5 +1,7 @@
 
 from pathlib import Path
+from ipaddress import ip_address
+from urllib.parse import urlsplit
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -36,6 +38,7 @@ class Settings(BaseSettings):
 
     # Banco de dados
     DATABASE_URL: str | None = None
+    SESSION_TTL_SECONDS: int = Field(default=86400, ge=1)
 
     # Inteligencia artificial
     OLLAMA_URL: str = "http://localhost:11434/api/chat"
@@ -49,6 +52,53 @@ class Settings(BaseSettings):
     # Mantido preparado para uma implementação futura do provedor OpenAI.
     OPENAI_API_KEY: str | None = None
     OPENAI_MODEL: str | None = None
+
+    @property
+    def is_development(self) -> bool:
+        return self.APP_ENV.casefold() in {"development", "dev", "test"}
+
+    @property
+    def secure_cookies(self) -> bool:
+        return not self.is_development
+
+    def frontend_origins(self) -> list[str]:
+        """Retorna a origem explícita do frontend, rejeitando configurações inseguras."""
+        configured_url = self.FRONTEND_URL.strip()
+        if not configured_url or "*" in configured_url:
+            raise ValueError("FRONTEND_URL deve definir uma origem específica.")
+
+        parsed = urlsplit(configured_url)
+        scheme = parsed.scheme.casefold()
+        hostname = parsed.hostname
+        try:
+            port = parsed.port
+        except ValueError as erro:
+            raise ValueError("FRONTEND_URL contém uma porta inválida.") from erro
+
+        if (
+            scheme not in {"http", "https"}
+            or hostname is None
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.path not in {"", "/"}
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("FRONTEND_URL deve conter somente uma origem HTTP(S).")
+
+        if not self.is_development:
+            try:
+                loopback = ip_address(hostname).is_loopback
+            except ValueError:
+                loopback = False
+            if scheme != "https" or hostname.casefold() == "localhost" or loopback:
+                raise ValueError("Produção exige uma origem HTTPS pública em FRONTEND_URL.")
+
+        if (scheme == "http" and port == 80) or (scheme == "https" and port == 443):
+            port = None
+        host = f"[{hostname}]" if ":" in hostname else hostname.casefold()
+        autoridade = f"{host}:{port}" if port is not None else host
+        return [f"{scheme}://{autoridade}"]
 
     # Dados geoespaciais
     GEO_DATA_PATH: str ="Matheus"

@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import secrets
 import uuid
+from datetime import date, datetime, timedelta, timezone
 
 from argon2 import PasswordHasher, Type
 from argon2.exceptions import VerificationError
@@ -33,6 +34,10 @@ class CredenciaisInvalidasError(ErroAutenticacao):
 
 class SessaoInvalidaError(ErroAutenticacao):
     """A sessão não existe ou já está encerrada."""
+
+
+class DadosContaInvalidosError(ErroAutenticacao, ValueError):
+    """Dados de conta invÃ¡lidos ou senha atual incorreta."""
 
 
 _EMAIL_VALIDO = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -119,9 +124,14 @@ class ServicoAutenticacao:
     def autenticar(self, email: str, senha: str) -> Sessao:
         try:
             usuario = self.validarCredenciais(email, senha)
+            if self._solicitacao_exclusao_vencida(usuario):
+                raise CredenciaisInvalidasError(_MENSAGEM_CREDENCIAIS_INVALIDAS)
+            # Um novo login é uso da conta e cancela a solicitação pendente.
+            if usuario.exclusao_solicitada_em is not None:
+                usuario.exclusao_solicitada_em = None
             sessao = Sessao(
                 usuario_id=usuario.id,
-                persistente=False,
+                persistente=True,
                 ativa=True,
             )
             sessao = self._sessoes.salvar(sessao)
@@ -146,6 +156,98 @@ class ServicoAutenticacao:
         except Exception:
             self._sessao.rollback()
             raise
+
+    def atualizar_conta(
+        self,
+        usuario_id: uuid.UUID,
+        senha_atual: str,
+        *,
+        nome: str | None = None,
+        email: str | None = None,
+        nova_senha: str | None = None,
+        data_nascimento: date | None = None,
+        atualizar_data: bool = False,
+    ) -> Usuario:
+        usuario = self._usuarios.buscar_por_id(usuario_id)
+        if usuario is None:
+            raise CredenciaisInvalidasError(_MENSAGEM_CREDENCIAIS_INVALIDAS)
+        try:
+            self.validarCredenciais(usuario.email, senha_atual)
+        except CredenciaisInvalidasError:
+            raise DadosContaInvalidosError("Senha atual incorreta.") from None
+
+        try:
+            if nome is not None:
+                usuario.nome = self._validar_nome(nome)
+            if email is not None:
+                email_validado = self._normalizar_email(email)
+                if self._usuarios.buscar_por_email_de_outro_usuario(email_validado, usuario_id):
+                    raise DadosContaInvalidosError("NÃ£o foi possÃ­vel atualizar os dados da conta.")
+                usuario.email = email_validado
+            if nova_senha is not None:
+                self._validar_senha(nova_senha)
+                usuario.senha_hash = _HASHER_SENHAS.hash(nova_senha)
+            if atualizar_data:
+                if data_nascimento is not None and data_nascimento > date.today():
+                    raise DadosContaInvalidosError("A data deve ser vÃ¡lida e nÃ£o pode estar no futuro.")
+                usuario.data_nascimento = data_nascimento
+            self._sessao.commit()
+            return usuario
+        except (DadosCadastroInvalidosError, DadosContaInvalidosError):
+            self._sessao.rollback()
+            raise
+        except IntegrityError as erro:
+            self._sessao.rollback()
+            if _email_ja_cadastrado(erro):
+                raise DadosContaInvalidosError("NÃ£o foi possÃ­vel atualizar os dados da conta.") from None
+            raise
+        except Exception:
+            self._sessao.rollback()
+            raise
+
+    def excluir_conta(self, usuario_id: uuid.UUID, senha_atual: str) -> datetime:
+        usuario = self._usuarios.buscar_por_id(usuario_id)
+        if usuario is None:
+            raise CredenciaisInvalidasError(_MENSAGEM_CREDENCIAIS_INVALIDAS)
+        try:
+            self.validarCredenciais(usuario.email, senha_atual)
+        except CredenciaisInvalidasError:
+            raise DadosContaInvalidosError("Senha atual incorreta.") from None
+        try:
+            agora = datetime.now(timezone.utc)
+            usuario.exclusao_solicitada_em = agora
+            self._sessao.commit()
+            return agora
+        except Exception:
+            self._sessao.rollback()
+            raise
+
+    def excluir_contas_vencidas(self, agora: datetime | None = None) -> int:
+        """Remove contas com solicitação ativa há pelo menos 30 dias."""
+        from sqlalchemy import select
+
+        instante = agora or datetime.now(timezone.utc)
+        limite = instante - timedelta(days=30)
+        usuarios = list(self._sessao.scalars(
+            select(Usuario).where(Usuario.exclusao_solicitada_em <= limite)
+        ))
+        try:
+            for usuario in usuarios:
+                self._usuarios.excluir(usuario)
+            self._sessao.commit()
+            return len(usuarios)
+        except Exception:
+            self._sessao.rollback()
+            raise
+
+    @staticmethod
+    def _solicitacao_exclusao_vencida(usuario: Usuario) -> bool:
+        solicitada_em = usuario.exclusao_solicitada_em
+        if solicitada_em is None:
+            return False
+        if solicitada_em.tzinfo is None:
+            solicitada_em = solicitada_em.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc) >= solicitada_em + timedelta(days=30)
 
     @staticmethod
     def _validar_nome(nome: str) -> str:
